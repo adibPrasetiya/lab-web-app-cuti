@@ -33,7 +33,8 @@ app.use(
   swaggerUi.serve,
   swaggerUi.setup(null, {
     customSiteTitle: 'Aplikasi Cuti API',
-    swaggerOptions: { url: '/api/v1/docs/openapi.yaml', persistAuthorization: true },
+    // validatorUrl null: jangan kirim URL spec ke validator.swagger.io (tidak bisa menembus gerbang akses lab).
+    swaggerOptions: { url: '/api/v1/docs/openapi.yaml', persistAuthorization: true, validatorUrl: null },
   }),
 );
 
