@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Environment (jangan commit; .env.example tetap ikut)
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+.svelte-kit/
+
+# Backend: file unggahan (simpan foldernya saja) & log
+backend/uploads/*
+!backend/uploads/.gitkeep
+logs/
+
+# Dokumen yang tidak di-commit
+DEPLOYMENT.md
+VULNERABILITIES.md
+
+# OS & editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
