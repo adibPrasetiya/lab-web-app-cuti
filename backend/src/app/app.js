@@ -1,6 +1,8 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import express from 'express';
+import swaggerUi from 'swagger-ui-express';
 import { env } from '../config/env.js';
 import { errorHandler } from '../middleware/errorHandler.js';
 import { notFound } from '../middleware/notFound.js';
@@ -22,6 +24,18 @@ app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
 // File lampiran pengajuan cuti.
 app.use('/uploads', express.static(UPLOAD_ROOT, { dotfiles: 'allow' }));
+
+// Dokumentasi API (OpenAPI 3): file spec + Swagger UI. Dipasang sebelum router protected agar tanpa login.
+const OPENAPI_FILE = fileURLToPath(new URL('../../docs/openapi.yaml', import.meta.url));
+app.get('/api/v1/docs/openapi.yaml', (req, res) => res.sendFile(OPENAPI_FILE));
+app.use(
+  '/api/v1/docs',
+  swaggerUi.serve,
+  swaggerUi.setup(null, {
+    customSiteTitle: 'Aplikasi Cuti API',
+    swaggerOptions: { url: '/api/v1/docs/openapi.yaml', persistAuthorization: true },
+  }),
+);
 
 app.use('/api/v1', publicRoutes);
 app.use('/api/v1', protectedRoutes);

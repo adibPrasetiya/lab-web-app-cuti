@@ -36,6 +36,12 @@ cp .env.example .env
 npm run dev                 # http://localhost:5176 (request /api & /uploads diteruskan ke backend)
 ```
 
+## Dokumentasi API
+
+Spesifikasi OpenAPI 3 ada di `backend/docs/openapi.yaml`. Saat backend berjalan, Swagger UI tersedia di
+`http://localhost:3200/api/v1/docs` (atau `http://localhost:5176/api/v1/docs` lewat proxy frontend). Untuk mencoba
+endpoint yang butuh login: jalankan `POST /auth/login`, salin `token`, lalu klik **Authorize**.
+
 ## Autentikasi
 
 Login memakai username & password. Session berupa UUID v4 yang disimpan di tabel `sessions` (backend)
@@ -53,6 +59,8 @@ dan `localStorage` (frontend), dikirim lewat header `Authorization: Bearer <uuid
 | POST | `/api/v1/cuti` | ajukan cuti (multipart: `jenis, startDate, endDate, alasan` + file `surat`) |
 | GET | `/api/v1/cuti/saya` | daftar pengajuan cuti milik sendiri |
 | GET | `/api/v1/cuti/antrian` | antrian approval (atasan: menunggu atasan; admin: menunggu admin) |
+| GET | `/api/v1/cuti/kalender?month=YYYY-MM` | pengajuan dalam satu bulan (pegawai: miliknya; atasan/admin: semua) |
+| GET | `/api/v1/cuti/semua` | seluruh pengajuan untuk riwayat approval (atasan/admin) |
 | GET | `/api/v1/cuti/:id` | detail pengajuan |
 | POST | `/api/v1/cuti/:id/approve` | setujui (atasan → menunggu admin; admin → disetujui) |
 | POST | `/api/v1/cuti/:id/reject` | tolak `{ catatan? }` |

@@ -1,0 +1,804 @@
+openapi: 3.0.3
+info:
+  title: Aplikasi Cuti API
+  version: 1.0.0
+  description: |
+    API pengajuan surat cuti pegawai dengan approval berjenjang (atasan → admin).
+
+    **Autentikasi.** Login lewat `POST /auth/login` untuk memperoleh `token` (session UUID), lalu kirim di
+    setiap request sebagai header `Authorization: Bearer <token>`. Di Swagger UI: klik **Authorize** lalu tempel token.
+
+    **Format respons.** Respons sukses dibungkus `{ success: true, message, data }`; respons gagal
+    `{ success: false, message, code?, errors? }`. Kesalahan validasi menyertakan `errors[]` berisi `{ field, message }`.
+
+    **Role.** `pegawai` mengajukan cuti; `atasan` & `admin` memproses approval; `admin` juga mengelola pengguna.
+
+    **Alur status cuti.** `menunggu_atasan` → (atasan setuju) `menunggu_admin` → (admin setuju) `disetujui`.
+    Penolakan di tahap mana pun → `ditolak`.
+
+    Akun contoh: `admin / Admin@123`, `atasan / Atasan@123`, `pegawai / Pegawai@123`.
+servers:
+  - url: /api/v1
+tags:
+  - name: Auth
+    description: Registrasi, login, session, dan password sendiri
+  - name: Profil
+    description: Data profil pengguna
+  - name: Cuti
+    description: Pengajuan cuti dan approval berjenjang
+  - name: Pengguna
+    description: Manajemen pengguna (khusus admin)
+  - name: Sistem
+    description: Health check dan file lampiran
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- Auth
+  /auth/register:
+    post:
+      operationId: register
+      tags: [Auth]
+      summary: Registrasi pegawai baru
+      description: Membuat akun baru dengan role `pegawai`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterInput' }
+      responses:
+        '201':
+          description: Registrasi berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Registrasi berhasil }
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [Auth]
+      summary: Login
+      description: Mengembalikan `token` session yang dipakai sebagai Bearer token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginInput' }
+      responses:
+        '200':
+          description: Login berhasil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Login berhasil }
+                      data:
+                        type: object
+                        required: [token, user]
+                        properties:
+                          token:
+                            type: string
+                            format: uuid
+                            example: 3f1c2b9e-8a4d-4f6e-9b7a-1c2d3e4f5a6b
+                          user: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [Auth]
+      summary: Pengguna yang sedang login
+      responses:
+        '200':
+          description: Data pengguna
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [Auth]
+      summary: Logout
+      description: Menghapus session yang dipakai pada request ini.
+      responses:
+        '200':
+          description: Logout berhasil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessNoData' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /auth/password:
+    post:
+      operationId: changePassword
+      tags: [Auth]
+      summary: Ganti password sendiri
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordInput' }
+      responses:
+        '200':
+          description: Password berhasil diperbarui
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessNoData' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  # ---------------------------------------------------------------- Profil
+  /profile/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getProfile
+      tags: [Profil]
+      summary: Lihat profil pengguna
+      responses:
+        '200':
+          description: Data profil
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    put:
+      operationId: updateProfile
+      tags: [Profil]
+      summary: Ubah profil pengguna
+      description: Hanya `nama` dan `nip` yang dapat diubah.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileInput' }
+      responses:
+        '200':
+          description: Profil berhasil diperbarui
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Profil berhasil diperbarui }
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  # ---------------------------------------------------------------- Cuti
+  /cuti:
+    post:
+      operationId: createCuti
+      tags: [Cuti]
+      summary: Ajukan cuti
+      description: |
+        Dikirim sebagai `multipart/form-data` beserta file surat cuti (field `surat`, satu file).
+        Format lampiran: PDF, JPG, atau PNG; ukuran maksimal sesuai konfigurasi server (default 10 MB).
+        Pengajuan baru berstatus `menunggu_atasan`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/CutiInput' }
+            encoding:
+              surat:
+                contentType: application/pdf, image/jpeg, image/png
+      responses:
+        '201':
+          description: Pengajuan cuti terkirim
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Pengajuan cuti terkirim }
+                      data: { $ref: '#/components/schemas/Cuti' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/saya:
+    get:
+      operationId: listMyCuti
+      tags: [Cuti]
+      summary: Daftar pengajuan milik sendiri
+      description: Diurutkan dari yang terbaru.
+      responses:
+        '200': { $ref: '#/components/responses/CutiList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/antrian:
+    get:
+      operationId: listApprovalQueue
+      tags: [Cuti]
+      summary: Antrian approval
+      description: |
+        Khusus `atasan` dan `admin`.
+        - `atasan`: pengajuan berstatus `menunggu_atasan`.
+        - `admin`: pengajuan berstatus `menunggu_admin`.
+      responses:
+        '200': { $ref: '#/components/responses/CutiList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/kalender:
+    get:
+      operationId: listCutiCalendar
+      tags: [Cuti]
+      summary: Pengajuan cuti dalam satu bulan
+      description: |
+        Pengajuan yang rentang tanggalnya beririsan dengan bulan yang diminta.
+        `pegawai` hanya melihat miliknya; `atasan` & `admin` melihat seluruh pegawai.
+      parameters:
+        - name: month
+          in: query
+          required: true
+          description: Bulan dalam format `YYYY-MM`.
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+            example: '2026-10'
+      responses:
+        '200': { $ref: '#/components/responses/CutiList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/semua:
+    get:
+      operationId: listAllCuti
+      tags: [Cuti]
+      summary: Seluruh pengajuan (riwayat approval)
+      description: Khusus `atasan` dan `admin`. Semua status, diurutkan dari yang terbaru.
+      responses:
+        '200': { $ref: '#/components/responses/CutiList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getCuti
+      tags: [Cuti]
+      summary: Detail pengajuan
+      description: Dapat dilihat oleh pemohon sendiri, atau oleh `atasan` / `admin`.
+      responses:
+        '200': { $ref: '#/components/responses/CutiItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/{id}/approve:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: approveCuti
+      tags: [Cuti]
+      summary: Setujui pengajuan
+      description: |
+        - `atasan`: hanya untuk status `menunggu_atasan` → menjadi `menunggu_admin`.
+        - `admin`: hanya untuk status `menunggu_admin` → menjadi `disetujui`.
+
+        Bila status pengajuan tidak sesuai tahap role pemanggil, respons `409`.
+      responses:
+        '200': { $ref: '#/components/responses/CutiItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /cuti/{id}/reject:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: rejectCuti
+      tags: [Cuti]
+      summary: Tolak pengajuan
+      description: |
+        Aturan tahap sama dengan approve (`atasan` → `menunggu_atasan`, `admin` → `menunggu_admin`).
+        Status menjadi `ditolak` dan `ditolakOleh` diisi role penolak.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectInput' }
+      responses:
+        '200': { $ref: '#/components/responses/CutiItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  # ---------------------------------------------------------------- Pengguna (admin)
+  /users:
+    get:
+      operationId: listUsers
+      tags: [Pengguna]
+      summary: Daftar pengguna
+      description: Khusus `admin`.
+      responses:
+        '200':
+          description: Daftar pengguna
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    post:
+      operationId: createUser
+      tags: [Pengguna]
+      summary: Buat pengguna
+      description: Khusus `admin`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCreateInput' }
+      responses:
+        '201':
+          description: Pengguna dibuat
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Pengguna dibuat }
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      operationId: getUser
+      tags: [Pengguna]
+      summary: Detail pengguna
+      description: Khusus `admin`.
+      responses:
+        '200':
+          description: Data pengguna
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    put:
+      operationId: updateUser
+      tags: [Pengguna]
+      summary: Ubah pengguna
+      description: Khusus `admin`. Mengubah `nama`, `nip`, dan `role`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdateInput' }
+      responses:
+        '200':
+          description: Pengguna diperbarui
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Success'
+                  - type: object
+                    properties:
+                      message: { example: Pengguna diperbarui }
+                      data: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    delete:
+      operationId: deleteUser
+      tags: [Pengguna]
+      summary: Hapus pengguna
+      description: Khusus `admin`. Admin tidak dapat menghapus akunnya sendiri (respons `400`).
+      responses:
+        '200':
+          description: Pengguna dihapus
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessNoData' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /users/{id}/reset-password:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    post:
+      operationId: resetUserPassword
+      tags: [Pengguna]
+      summary: Reset password pengguna
+      description: Khusus `admin`. Menyetel password baru untuk pengguna yang lupa password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordInput' }
+      responses:
+        '200':
+          description: Password pengguna direset
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessNoData' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  # ---------------------------------------------------------------- Sistem
+  /health:
+    servers:
+      - url: /
+    get:
+      operationId: getHealth
+      tags: [Sistem]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: Server berjalan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /uploads/{filename}:
+    servers:
+      - url: /
+    get:
+      operationId: getUpload
+      tags: [Sistem]
+      summary: Unduh lampiran surat cuti
+      description: Nama file diambil dari `attachmentFilename` pada data pengajuan cuti.
+      security: []
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema: { type: string, example: 0b6f5d1e-2c3a-4b5c-8d9e-0f1a2b3c4d5e.pdf }
+      responses:
+        '200':
+          description: Isi file lampiran
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: UUID
+      description: Token session dari `POST /auth/login`.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1, example: 1 }
+
+  responses:
+    CutiList:
+      description: Daftar pengajuan cuti
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Success'
+              - type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Cuti' }
+    CutiItem:
+      description: Data pengajuan cuti
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Success'
+              - type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Cuti' }
+    BadRequest:
+      description: Data yang dikirim tidak valid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            message: Data yang dikirim tidak valid
+            errors:
+              - field: username
+                message: username is required
+    Unauthorized:
+      description: Belum login, session tidak valid, atau kredensial salah
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            message: Tidak terautentikasi
+    Forbidden:
+      description: Role tidak memiliki akses
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            message: Akses ditolak
+    NotFound:
+      description: Data atau endpoint tidak ditemukan
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            message: Data tidak ditemukan
+    Conflict:
+      description: Konflik dengan data yang ada (mis. username sudah dipakai, status pengajuan tidak sesuai tahap)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            success: false
+            message: Username sudah digunakan
+            errors:
+              - field: username
+                message: Username sudah digunakan
+    ServerError:
+      description: Kesalahan server
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        message: { type: string }
+                        stack: { type: string }
+
+  schemas:
+    Success:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: OK }
+        data: {}
+    SuccessNoData:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string, example: OK }
+        data: { type: object, nullable: true, example: null }
+    Error:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string }
+        code: { type: string, description: Kode mesin opsional }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/FieldError' }
+    FieldError:
+      type: object
+      properties:
+        field: { type: string, example: username }
+        message: { type: string, example: username is required }
+
+    Role:
+      type: string
+      enum: [pegawai, atasan, admin]
+    JenisCuti:
+      type: string
+      enum: [tahunan, sakit, penting]
+    StatusCuti:
+      type: string
+      enum: [menunggu_atasan, menunggu_admin, disetujui, ditolak]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, example: 3 }
+        username: { type: string, example: pegawai }
+        nama: { type: string, example: Siti Rahayu }
+        nip: { type: string, example: '199005202015032003' }
+        role: { $ref: '#/components/schemas/Role' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Pemohon:
+      type: object
+      properties:
+        id: { type: integer, example: 3 }
+        nama: { type: string, example: Siti Rahayu }
+        nip: { type: string, example: '199005202015032003' }
+        username: { type: string, example: pegawai }
+        role: { $ref: '#/components/schemas/Role' }
+    Cuti:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        userId: { type: integer, example: 3 }
+        jenis: { $ref: '#/components/schemas/JenisCuti' }
+        startDate: { type: string, format: date, example: '2026-10-20' }
+        endDate: { type: string, format: date, example: '2026-10-22' }
+        alasan: { type: string, example: Acara keluarga }
+        attachmentFilename:
+          type: string
+          description: Nama file di server; unduh lewat `GET /uploads/{filename}`.
+          example: 0b6f5d1e-2c3a-4b5c-8d9e-0f1a2b3c4d5e.pdf
+        attachmentOriginalName: { type: string, example: surat-cuti.pdf }
+        attachmentMime: { type: string, example: application/pdf }
+        status: { $ref: '#/components/schemas/StatusCuti' }
+        ditolakOleh:
+          type: string
+          enum: [atasan, admin]
+          nullable: true
+        atasanId: { type: integer, nullable: true }
+        atasanNote: { type: string, nullable: true }
+        atasanActedAt: { type: string, format: date-time, nullable: true }
+        adminId: { type: integer, nullable: true }
+        adminNote: { type: string, nullable: true }
+        adminActedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        pemohon: { $ref: '#/components/schemas/Pemohon' }
+
+    RegisterInput:
+      type: object
+      required: [username, password, nama, nip]
+      properties:
+        username: { type: string, maxLength: 50, example: budi }
+        password: { type: string, format: password, example: Budi@12345 }
+        nama: { type: string, maxLength: 100, example: Budi Hartono }
+        nip: { type: string, maxLength: 30, example: '199501012020011001' }
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: pegawai }
+        password: { type: string, format: password, example: Pegawai@123 }
+    PasswordInput:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, format: password, example: PasswordBaru@123 }
+    ProfileInput:
+      type: object
+      required: [nama, nip]
+      properties:
+        nama: { type: string, maxLength: 100, example: Siti Rahayu }
+        nip: { type: string, maxLength: 30, example: '199005202015032003' }
+    CutiInput:
+      type: object
+      required: [jenis, startDate, endDate, alasan, surat]
+      properties:
+        jenis: { $ref: '#/components/schemas/JenisCuti' }
+        startDate: { type: string, format: date, example: '2026-10-20' }
+        endDate:
+          type: string
+          format: date
+          description: Tidak boleh sebelum `startDate`.
+          example: '2026-10-22'
+        alasan: { type: string, maxLength: 500, example: Acara keluarga }
+        surat:
+          type: string
+          format: binary
+          description: File surat cuti (PDF, JPG, atau PNG).
+    RejectInput:
+      type: object
+      properties:
+        catatan: { type: string, maxLength: 500, example: Jadwal bertabrakan dengan kegiatan kantor }
+    UserCreateInput:
+      type: object
+      required: [username, password, nama, nip]
+      properties:
+        username: { type: string, maxLength: 50, example: andi }
+        password: { type: string, format: password, example: Andi@12345 }
+        nama: { type: string, maxLength: 100, example: Andi Wijaya }
+        nip: { type: string, maxLength: 30, example: '199703152021011002' }
+        role:
+          allOf:
+            - $ref: '#/components/schemas/Role'
+          default: pegawai
+    UserUpdateInput:
+      type: object
+      required: [nama, nip, role]
+      properties:
+        nama: { type: string, maxLength: 100, example: Andi Wijaya }
+        nip: { type: string, maxLength: 30, example: '199703152021011002' }
+        role: { $ref: '#/components/schemas/Role' }
